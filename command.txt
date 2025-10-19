@@ -31,10 +31,8 @@ stellar contract build
 stellar contract upload --network testnet --source-account admin --wasm target\wasm32v1-none\release\NFTMarket.wasm
 
 
-ℹ️  Simulating install transaction…
-ℹ️  Signing transaction: 0b8e01f152a08dd46cdfbae5dd0d607cf1abc2d6c5014110023fe11e06bb9b44
-🌎 Submitting install transaction…
-eeeb91068576b663d137692651df2416c8992aa95113f0147d37ab7205e51e94
+
+0423ff6e2dc3dbc967386e9564b1ca61ce218a678f6080b24944a59c392065d8
 
 
 
@@ -42,17 +40,15 @@ eeeb91068576b663d137692651df2416c8992aa95113f0147d37ab7205e51e94
 
 
 
-stellar contract deploy --wasm-hash 29842ae102bed964cc37c28879a05413513fb173d4c62cb4c963aa9c011e5130 --source-account admin --network testnet
+stellar contract deploy --wasm-hash 0423ff6e2dc3dbc967386e9564b1ca61ce218a678f6080b24944a59c392065d8 --source-account admin --network testnet
 
 
-2534941c045fc02c834e2f7a603db4dec9bde09d73640767a364fb3330e0c5ca
-CAMMXQS3SLZ3RD64USEGBQGBI7EAUG7X4XGKU5QOMRAWGIGO5FMKULN4
-
+CDAIUP47VMYYQXNCHJFKBZJTLYL4E6DTUIQIJ7HY3WIUZUP7XOL6PMMG
 
 
 
 stellar contract invoke ^
-  --id CAMMXQS3SLZ3RD64USEGBQGBI7EAUG7X4XGKU5QOMRAWGIGO5FMKULN4 ^
+  --id CCAU54TF74JLHIPME26MEBFQOSZ3L4KJH24QDXMV5OVPF47PTBH5OGPV ^
   --source-account admin ^
   --network testnet ^
   -- init ^
@@ -65,7 +61,7 @@ stellar contract invoke ^
 
 
 stellar contract invoke ^
-  --id CCQZYYID6SZRVDVXG5XYKI2JFIEYHB5VJ3O7XJ3KVZTFYF6TJQHKEYFA ^
+  --id CCAU54TF74JLHIPME26MEBFQOSZ3L4KJH24QDXMV5OVPF47PTBH5OGPV ^
   --source-account admin ^
   --network testnet ^
   -- balance_of ^
