@@ -32,7 +32,7 @@ stellar contract upload --network testnet --source-account admin --wasm target\w
 
 
 
-0423ff6e2dc3dbc967386e9564b1ca61ce218a678f6080b24944a59c392065d8
+b40e905ab915e81fa70f09e4a5bc9080d13d7ae8166e09ac007c46987a2fda8c
 
 
 
@@ -40,28 +40,28 @@ stellar contract upload --network testnet --source-account admin --wasm target\w
 
 
 
-stellar contract deploy --wasm-hash 0423ff6e2dc3dbc967386e9564b1ca61ce218a678f6080b24944a59c392065d8 --source-account admin --network testnet
+stellar contract deploy --wasm-hash b40e905ab915e81fa70f09e4a5bc9080d13d7ae8166e09ac007c46987a2fda8c --source-account admin --network testnet
 
 
-CDAIUP47VMYYQXNCHJFKBZJTLYL4E6DTUIQIJ7HY3WIUZUP7XOL6PMMG
+CBO7BWEFKNHFYEPPQFJRNUHVEMJPZOFMDNCCLXXO6VO5QX7PXNKGRALG
 
 
 
 stellar contract invoke ^
-  --id CCAU54TF74JLHIPME26MEBFQOSZ3L4KJH24QDXMV5OVPF47PTBH5OGPV ^
+  --id CBO7BWEFKNHFYEPPQFJRNUHVEMJPZOFMDNCCLXXO6VO5QX7PXNKGRALG ^
   --source-account admin ^
   --network testnet ^
   -- init ^
   --admin GAQ2UI6MCSEU77AZX765AUMPOKRMGEMIMH3M5CMB6TECGCVYEBFXJAJG ^
   --name "NFTMarket" ^
   --symbol "NFTM" ^
-  --decimals 3
+  --decimals 0
 
 
 
 
 stellar contract invoke ^
-  --id CCAU54TF74JLHIPME26MEBFQOSZ3L4KJH24QDXMV5OVPF47PTBH5OGPV ^
+  --id CBO7BWEFKNHFYEPPQFJRNUHVEMJPZOFMDNCCLXXO6VO5QX7PXNKGRALG ^
   --source-account admin ^
   --network testnet ^
   -- balance_of ^
@@ -70,10 +70,10 @@ stellar contract invoke ^
 
 
 
-stellar contract invoke --id CCQZYYID6SZRVDVXG5XYKI2JFIEYHB5VJ3O7XJ3KVZTFYF6TJQHKEYFA --source-account admin --network testnet -- name
-stellar contract invoke --id CCQZYYID6SZRVDVXG5XYKI2JFIEYHB5VJ3O7XJ3KVZTFYF6TJQHKEYFA --source-account admin --network testnet -- symbol
-stellar contract invoke --id CCQZYYID6SZRVDVXG5XYKI2JFIEYHB5VJ3O7XJ3KVZTFYF6TJQHKEYFA --source-account admin --network testnet -- decimals
-stellar contract invoke --id CCQZYYID6SZRVDVXG5XYKI2JFIEYHB5VJ3O7XJ3KVZTFYF6TJQHKEYFA --source-account admin --network testnet -- total_supply
+stellar contract invoke --id CBO7BWEFKNHFYEPPQFJRNUHVEMJPZOFMDNCCLXXO6VO5QX7PXNKGRALG --source-account admin --network testnet -- name
+stellar contract invoke --id CBO7BWEFKNHFYEPPQFJRNUHVEMJPZOFMDNCCLXXO6VO5QX7PXNKGRALG --source-account admin --network testnet -- symbol
+stellar contract invoke --id CBO7BWEFKNHFYEPPQFJRNUHVEMJPZOFMDNCCLXXO6VO5QX7PXNKGRALG --source-account admin --network testnet -- decimals
+stellar contract invoke --id CBO7BWEFKNHFYEPPQFJRNUHVEMJPZOFMDNCCLXXO6VO5QX7PXNKGRALG --source-account admin --network testnet -- total_supply
 
 
 

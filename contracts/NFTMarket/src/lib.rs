@@ -31,14 +31,13 @@ const LST:      Symbol = symbol_short!("LST");   // (LST, id) → Listing (thôn
 const LIDS:     Symbol = symbol_short!("LIDS");  // Vec<u32> danh sách id đang niêm yết
 const LSTFEE:   Symbol = symbol_short!("LFEE");  // Phí listing (i128, tính bằng “raw” theo decimals FT)
 
-// ===== Transfer fee: 0.1 token khi DECIMALS = 3 =====
-const TRANSFER_FEE_RAW: i128 = 100; // 0.1 * 10^3
+// ===== Transfer fee: cố định 1 “raw” (0.001 token vì decimals=3) =====
+const TRANSFER_FEE_RAW: i128 = 1;
 
 // ✅ Để FALSE: không đánh index toàn bộ khi mint (tránh vượt footprint simulate)
 const ENABLE_POS_INDEX: bool = false;
 
 // ========== Cấu hình kích thước NFT ==========
-// 9x9 = 81 pixel; mỗi pixel là 1 byte: 0..31 (index vào bảng màu 32 phần tử)
 const NFT_SIZE:   u32 = 9;
 const NFT_PIXELS: u32 = NFT_SIZE * NFT_SIZE; // 81
 
@@ -46,15 +45,15 @@ const NFT_PIXELS: u32 = NFT_SIZE * NFT_SIZE; // 81
 #[contracttype]
 #[derive(Clone)]
 pub struct NftData {
-    pub owner: Address, // Chủ sở hữu hiện tại
-    pub pixels: Bytes,  // Mảng 81 byte (9x9), mỗi byte 0..31 tương ứng index màu
+    pub owner: Address,
+    pub pixels: Bytes,
 }
 
 #[contracttype]
 #[derive(Clone)]
 pub struct Listing {
-    pub seller: Address, // Người bán (phải là owner)
-    pub price: i128,     // Giá bán (đơn vị “raw” theo decimals của FT)
+    pub seller: Address,
+    pub price: i128,
 }
 
 
@@ -94,10 +93,10 @@ impl SimpleTokenNft {
         let empty_ids: Vec<u32> = Vec::new(&env);
         env.storage().instance().set(&LIDS, &empty_ids);
 
-        log!(&env, "INIT OK supply={} (decimals=3) transfer_fee=0.1 listing_fee=0.001", total);
+        log!(&env, "INIT OK supply={} (decimals=3) transfer_fee=0.001 listing_fee=0.001", total);
     }
 
-    // transfer (FT) — người gửi trả phí 0.1 token
+    // transfer (FT) — người gửi trả phí 0.001 token (1 raw)
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         require_inited(&env);
         if amount <= 0 { panic!("BAD_AMOUNT"); }
@@ -108,23 +107,82 @@ impl SimpleTokenNft {
         let to_bal: i128 = env.storage().persistent().get(&(BAL, &to)).unwrap_or(0);
         let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
 
-        // Người gửi trả phí 0.1 token (100 raw)
         let fee: i128 = TRANSFER_FEE_RAW;
         let total_deduct = amount.checked_add(fee).expect("FEE_ADD_OVERFLOW");
         if from_bal < total_deduct { panic!("INSUFFICIENT_BALANCE_WITH_FEE"); }
 
-        // Cập nhật số dư người gửi và người nhận
-        let new_from = from_bal - total_deduct;
+        // Cập nhật to
         let new_to   = to_bal.checked_add(amount).expect("BAL_OVERFLOW");
-        env.storage().persistent().set(&(BAL, &from), &new_from);
         env.storage().persistent().set(&(BAL, &to),   &new_to);
 
-        // LUÔN credit phí cho admin (kể cả khi from == admin) để giữ invariant tổng cung
+        // Khấu trừ from
+        let new_from = from_bal - total_deduct;
+        env.storage().persistent().set(&(BAL, &from), &new_from);
+
+        // Luôn cộng phí cho admin
         let admin_bal: i128 = env.storage().persistent().get(&(BAL, &admin)).unwrap_or(0);
         let new_admin = admin_bal.checked_add(fee).expect("BAL_OVERFLOW");
         env.storage().persistent().set(&(BAL, &admin), &new_admin);
 
-        log!(&env, "TRANSFER: {} -> {} amount={} fee=0.1", from, to, amount);
+        log!(&env, "TRANSFER: {} -> {} amount={} fee_raw={}", from, to, amount, fee);
+    }
+
+    // -------------------------------------------------------------------------
+    // transfer_batch
+    //   - Gửi token tới nhiều địa chỉ trong 1 lần gọi.
+    //   - Người gửi trả phí cố định 1 raw / giao dịch.
+    //   - Tổng khấu trừ = sum(amounts) + len(tos)*fee_raw.
+    //   - Luôn cộng tổng phí cho admin để bảo toàn tổng cung.
+    //   - Trả về tổng phí đã thu (raw).
+    // -------------------------------------------------------------------------
+    pub fn transfer_batch(env: Env, from: Address, tos: Vec<Address>, amounts: Vec<i128>) -> i128 {
+        require_inited(&env);
+        from.require_auth();
+
+        let n = tos.len();
+        if n == 0 { panic!("EMPTY_BATCH"); }
+        if n != amounts.len() { panic!("LENGTH_MISMATCH"); }
+
+        // Validate inputs & tính tổng amount
+        let mut sum_amounts: i128 = 0;
+        for i in 0..n {
+            let to = tos.get_unchecked(i);
+            let amt = amounts.get_unchecked(i);
+            if amt <= 0 { panic!("BAD_AMOUNT_AT"); }
+            if to == from { panic!("SELF_TRANSFER_AT"); }
+            sum_amounts = sum_amounts.checked_add(amt).expect("AMOUNT_SUM_OVERFLOW");
+        }
+
+        let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+        let fee_per: i128 = TRANSFER_FEE_RAW;
+        let n_i128: i128 = n as i128;
+        let total_fee: i128 = fee_per.checked_mul(n_i128).expect("FEE_MUL_OVERFLOW");
+        let total_deduct: i128 = sum_amounts.checked_add(total_fee).expect("TOTAL_DEDUCT_OVERFLOW");
+
+        // Kiểm tra số dư người gửi
+        let from_bal: i128 = env.storage().persistent().get(&(BAL, &from)).unwrap_or(0);
+        if from_bal < total_deduct { panic!("INSUFFICIENT_BALANCE_WITH_FEE"); }
+
+        // Cộng cho từng người nhận
+        for i in 0..n {
+            let to = tos.get_unchecked(i);
+            let amt = amounts.get_unchecked(i);
+            let to_bal: i128 = env.storage().persistent().get(&(BAL, &to)).unwrap_or(0);
+            let new_to = to_bal.checked_add(amt).expect("BAL_OVERFLOW");
+            env.storage().persistent().set(&(BAL, &to), &new_to);
+        }
+
+        // Khấu trừ người gửi (một lần)
+        let new_from = from_bal - total_deduct;
+        env.storage().persistent().set(&(BAL, &from), &new_from);
+
+        // Cộng tổng phí cho admin (một lần)
+        let admin_bal: i128 = env.storage().persistent().get(&(BAL, &admin)).unwrap_or(0);
+        let new_admin = admin_bal.checked_add(total_fee).expect("BAL_OVERFLOW");
+        env.storage().persistent().set(&(BAL, &admin), &new_admin);
+
+        log!(&env, "TRANSFER_BATCH: from={} n_recipients={} sum_amounts={} total_fee_raw={}", from, n, sum_amounts, total_fee);
+        total_fee
     }
 
     /*-------------------------------------------------------------------------*
@@ -133,39 +191,33 @@ impl SimpleTokenNft {
     pub fn mint_nft(env: Env, to: Address, pixels: Bytes) -> u32 {
         require_inited(&env);
         let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
-        admin.require_auth(); // Chỉ admin mới được mint
+        admin.require_auth();
 
         if pixels.len() != NFT_PIXELS { panic!("PIXELS_LEN_81"); }
         for i in 0..pixels.len() {
             let v = pixels.get_unchecked(i);
-            if v > 31 { panic!("PIXEL_OUT_OF_RANGE"); } // mỗi byte 0..31 (index color)
+            if v > 31 { panic!("PIXEL_OUT_OF_RANGE"); }
         }
 
-        // Chặn mint trùng giá trị pixels (đảm bảo uniqueness)
         if env.storage().persistent().has(&(UNIQ, &pixels)) {
             panic!("DUPLICATE_VALUE");
         }
 
-        // Cấp id mới
         let cur: i128 = env.storage().instance().get(&NFT_SUP).unwrap_or(0);
         if cur >= NFT_MAX { panic!("NFT_MAX_SUP_REACHED"); }
         let next: i128 = env.storage().instance().get(&NEXT_ID).unwrap_or(0);
         if next >= i128::from(u32::MAX) { panic!("NFT_ID_EXHAUSTED"); }
         let id: u32 = next as u32;
 
-        // Lưu NFT
         let data = NftData { owner: to.clone(), pixels: pixels.clone() };
         env.storage().persistent().set(&(NFT, id), &data);
 
-        // Cập nhật danh sách NFT của owner
         let mut list: Vec<u32> = env.storage().persistent().get(&(OWN, &to)).unwrap_or(Vec::new(&env));
         list.push_back(id);
         env.storage().persistent().set(&(OWN, &to), &list);
 
-        // Ghi dấu uniqueness
         env.storage().persistent().set(&(UNIQ, &pixels), &id);
 
-        // (tuỳ chọn) đánh index màu theo từng vị trí
         if ENABLE_POS_INDEX {
             for i in 0..NFT_PIXELS {
                 let col: u32 = pixels.get_unchecked(i).into();
@@ -176,7 +228,6 @@ impl SimpleTokenNft {
             }
         }
 
-        // Tăng bộ đếm
         env.storage().instance().set(&NFT_SUP, &(cur + 1));
         env.storage().instance().set(&NEXT_ID, &(next + 1));
 
@@ -191,7 +242,6 @@ impl SimpleTokenNft {
         require_inited(&env);
         if end > NFT_PIXELS || start >= end { panic!("BAD_RANGE"); }
 
-        // Hiện tại chỉ admin được phép bổ sung index (có thể mở rộng cho owner)
         let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
         admin.require_auth();
 
@@ -200,7 +250,7 @@ impl SimpleTokenNft {
 
         for i in start..end {
             let col: u32 = pixels.get_unchecked(i).into();
-            let key = (IDX, i, col); // key: (IDX, pos, color)
+            let key = (IDX, i, col);
             let mut vec: Vec<u32> = env.storage().persistent().get(&key).unwrap_or(Vec::new(&env));
             vec.push_back(id);
             env.storage().persistent().set(&key, &vec);
@@ -216,7 +266,7 @@ impl SimpleTokenNft {
         require_inited(&env);
         from.require_auth();
         if from == to { panic!("SELF_TRANSFER"); }
-        if env.storage().persistent().has(&(LST, id)) { panic!("LISTED"); } // đang rao bán thì không cho chuyển
+        if env.storage().persistent().has(&(LST, id)) { panic!("LISTED"); }
         nft_transfer_internal(&env, from, to, id);
     }
 
@@ -286,34 +336,26 @@ impl SimpleTokenNft {
         seller.require_auth();
         if price <= 0 { panic!("BAD_PRICE"); }
 
-        // Phải là owner
         let data: NftData = env.storage().persistent().get(&(NFT, id)).expect("NFT_NOT_FOUND");
         if data.owner != seller { panic!("NOT_OWNER"); }
 
-        // Không list trùng
         if env.storage().persistent().has(&(LST, id)) { panic!("ALREADY_LISTED"); }
 
-        // Thu phí listing (nếu có)
         let fee: i128 = env.storage().instance().get(&LSTFEE).unwrap_or(0);
         if fee > 0 {
             let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
-
-            // trừ người bán
             let mut seller_bal: i128 = env.storage().persistent().get(&(BAL, &seller)).unwrap_or(0);
             if seller_bal < fee { panic!("INSUFFICIENT_FOR_FEE"); }
             seller_bal -= fee;
             env.storage().persistent().set(&(BAL, &seller), &seller_bal);
 
-            // LUÔN cộng phí cho admin (kể cả seller == admin) để không bị burn ngoài ý muốn
             let admin_bal: i128 = env.storage().persistent().get(&(BAL, &admin)).unwrap_or(0);
             env.storage().persistent().set(&(BAL, &admin), &(admin_bal.checked_add(fee).expect("BAL_OVERFLOW")));
         }
 
-        // Lưu listing
         let lst = Listing { seller: seller.clone(), price };
         env.storage().persistent().set(&(LST, id), &lst);
 
-        // Thêm vào danh sách id đang list
         let mut ids: Vec<u32> = env.storage().instance().get(&LIDS).unwrap_or(Vec::new(&env));
         ids.push_back(id);
         env.storage().instance().set(&LIDS, &ids);
@@ -343,13 +385,11 @@ impl SimpleTokenNft {
 
         let lst: Listing = env.storage().persistent().get(&(LST, id)).expect("NOT_LISTED");
 
-        // Kiểm tra lại ownership để tránh “listing stale”
         let data: NftData = env.storage().persistent().get(&(NFT, id)).expect("NFT_NOT_FOUND");
         if data.owner != lst.seller { panic!("LISTING_OWNER_MISMATCH"); }
         if buyer == lst.seller { panic!("SELF_BUY"); }
         if lst.price <= 0 { panic!("BAD_PRICE"); }
 
-        // Trừ tiền buyer, cộng seller
         let mut buyer_bal: i128 = env.storage().persistent().get(&(BAL, &buyer)).unwrap_or(0);
         if buyer_bal < lst.price { panic!("INSUFFICIENT_BALANCE"); }
         let mut seller_bal: i128 = env.storage().persistent().get(&(BAL, &lst.seller)).unwrap_or(0);
@@ -359,10 +399,8 @@ impl SimpleTokenNft {
         env.storage().persistent().set(&(BAL, &buyer), &buyer_bal);
         env.storage().persistent().set(&(BAL, &lst.seller), &seller_bal);
 
-        // Chuyển NFT
         nft_transfer_internal(&env, lst.seller.clone(), buyer.clone(), id);
 
-        // Xoá listing
         env.storage().persistent().remove(&(LST, id));
         let mut ids: Vec<u32> = env.storage().instance().get(&LIDS).unwrap_or(Vec::new(&env));
         vec_remove_once(&env, &mut ids, id);
@@ -372,7 +410,6 @@ impl SimpleTokenNft {
     }
 
     pub fn market_get(env: Env, id: u32) -> Option<(Address, i128)> {
-        // Trả về Some(seller, price) nếu đang list, None nếu không.
         let maybe: Option<Listing> = env.storage().persistent().get(&(LST, id));
         match maybe {
             Some(l) => Some((l.seller, l.price)),
@@ -451,7 +488,7 @@ fn mul_pow10_i128(base: i128, decimals: u32) -> Option<i128> {
     Some(x)
 }
 
-// DB32 mặc định (0xRRGGBB) — trùng thứ tự bạn dùng ở frontend (index 0..31)
+// DB32 mặc định (0xRRGGBB)
 fn default_palette(env: &Env) -> Vec<u32> {
     Vec::from_array(
         env,

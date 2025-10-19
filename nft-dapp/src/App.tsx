@@ -387,6 +387,110 @@ export default function App() {
     }
   };
 
+  /* =========================================================
+   * BATCH TRANSFER
+   * =======================================================*/
+  type BatchRow = { line: number; to: string; amountRaw: bigint; original: string; error?: string };
+
+  const [batchText, setBatchText] = useState<string>("");
+  const [batchRows, setBatchRows] = useState<BatchRow[]>([]);
+  const [batchIsToken, setBatchIsToken] = useState<boolean>(false); // true = nhập theo token
+  const [batchTotal, setBatchTotal] = useState<bigint>(0n);
+  const [batchOkCount, setBatchOkCount] = useState<number>(0);
+  const [batchHasErrors, setBatchHasErrors] = useState<boolean>(false);
+
+  const GADDR_RE = /^G[A-Z0-9]{55}$/;
+  const pow10 = (n:number) => { let r = 1n; for (let i=0;i<n;i++) r *= 10n; return r; };
+
+  function parseBatchText(text: string, asToken: boolean, d: number): { rows: BatchRow[], total: bigint } {
+    const lines = text.split(/\r?\n/);
+    const rows: BatchRow[] = [];
+    let total = 0n;
+    const mul = asToken ? pow10(d) : 1n;
+
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i].trim();
+      if (!raw) continue;
+
+      // Tách theo tab / dấu phẩy / nhiều khoảng trắng
+      const parts = raw.split(/[\t, ]+/).filter(Boolean);
+      if (parts.length < 2) {
+        rows.push({ line: i+1, to: "", amountRaw: 0n, original: raw, error: "Thiếu cột số lượng" });
+        continue;
+      }
+
+      const to = parts[0].trim();
+      let amtStr = parts[1].replace(/_/g, "").trim();
+
+      let amountRaw: bigint;
+      try {
+        if (asToken && amtStr.includes(".")) {
+          // chuẩn hóa phần thập phân theo decimals
+          const [intP, fracP=""] = amtStr.split(".");
+          if (!/^\d+$/.test(intP || "0") || !/^\d+$/.test(fracP || "0")) throw new Error("Số không hợp lệ");
+          const fracPad = (fracP + "0".repeat(d)).slice(0, d);
+          amountRaw = BigInt(intP || "0") * mul + BigInt(fracPad || "0");
+        } else {
+          // raw hoặc token nguyên
+          if (!/^\d+$/.test(amtStr)) throw new Error("Số không hợp lệ");
+          amountRaw = BigInt(amtStr) * mul;
+        }
+      } catch {
+        rows.push({ line: i+1, to, amountRaw: 0n, original: raw, error: "Số lượng không hợp lệ" });
+        continue;
+      }
+
+      if (!GADDR_RE.test(to)) {
+        rows.push({ line: i+1, to, amountRaw, original: raw, error: "Địa chỉ G... không hợp lệ" });
+        continue;
+      }
+      if (amountRaw <= 0n) {
+        rows.push({ line: i+1, to, amountRaw, original: raw, error: "Số lượng phải > 0" });
+        continue;
+      }
+
+      rows.push({ line: i+1, to, amountRaw, original: raw });
+      total += amountRaw;
+    }
+
+    return { rows, total };
+  }
+
+  const analyzeBatch = () => {
+    const { rows, total } = parseBatchText(batchText, batchIsToken, decimals || 0);
+    setBatchRows(rows);
+    setBatchTotal(total);
+    const errs = rows.filter(r => r.error).length;
+    setBatchHasErrors(errs > 0);
+    setBatchOkCount(rows.length - errs);
+    if (rows.length === 0) notify.warn("Không có dòng hợp lệ.");
+    else notify.info(`Parsed ${rows.length} dòng (${rows.length - errs} OK, ${errs} lỗi).`);
+  };
+
+  const runBatchTransfer = async () => {
+    if (!pk) { notify.warn("Chưa kết nối ví."); return; }
+    if (batchRows.length === 0) { notify.warn("Chưa có dữ liệu batch."); return; }
+
+    let ok = 0, fail = 0;
+    for (const r of batchRows) {
+      if (r.error) { fail++; continue; }
+      try {
+        await tokenTransfer(pk, pk, r.to, r.amountRaw);  // gửi tuần tự
+        ok++;
+        setAct(`OK line ${r.line}: ${r.to} ← ${r.amountRaw.toString()} (raw)`);
+      } catch (e:any) {
+        fail++;
+        setAct(`FAIL line ${r.line}: ${r.to} ← ${r.amountRaw.toString()} | ${e?.message || e}`);
+      }
+    }
+    try {
+      const bal = await readBalanceOf(pk, pk);
+      setBalance(String(bal));
+    } catch {}
+
+    notify.ok(`Batch xong: ${ok} thành công, ${fail} lỗi.`);
+  };
+
   /* --------------------------- UI --------------------------- */
   return (
     <div style={centerWrap}>
@@ -410,7 +514,7 @@ export default function App() {
           }
         >
           <div style={{ fontSize:13, opacity:.8 }}>
-            App chia thành các phần độc lập: Token, Chuyển token, NFT (preview & danh sách), Palette, Mint, Marketplace.
+            App chia thành các phần độc lập: Token, Chuyển token, Batch transfer, NFT, Palette, Mint, Marketplace.
             Tất cả lỗi/thành công hiển thị bằng thông báo ở góc phải.
           </div>
         </Section>
@@ -439,6 +543,85 @@ export default function App() {
                   doTokenTransfer(to, amt);
                 }}>Gửi token</button>
               </div>
+            </div>
+          </div>
+        </Section>
+
+        {/* ===== Batch Transfer ===== */}
+        <Section title="Chuyển token hàng loạt">
+          <div style={{ display:"grid", gap:8 }}>
+            <div style={{ fontSize:12, opacity:.85 }}>
+              Dán dữ liệu: <code>G... [tab|dấu phẩy|space] amount</code> — ví dụ:
+              <pre style={{ margin: "6px 0", background:"#111", padding:8, borderRadius:6 }}>
+GBKBACMKBLAQQOYB2CGJHS3ONDI73SXSJWNJ5MNVHOXEGKZSUXC3E47P	150000
+GB7VCPT6EEMK3ZKE2SGI5BA7YDGFUX6F7QU47W2TFIHPBGPG7GWRBSJJ	150000
+GAMY3VPG5SFCXM26AA5AMLJKN64Y7GJUNVRUO5VFKHV6OZGVS76YVJBH	150000
+              </pre>
+              Mặc định đọc <b>raw</b>. Nếu bạn nhập theo <b>token</b> (có thể có số thập phân), bật “Token mode”.
+            </div>
+
+            <textarea
+              placeholder="Dán list địa chỉ và số lượng..."
+              style={{ ...input, height:140 }}
+              value={batchText}
+              onChange={e=>setBatchText(e.target.value)}
+            />
+
+            <div style={{ display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
+              <label style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <input type="checkbox" checked={batchIsToken} onChange={e=>setBatchIsToken(e.target.checked)} />
+                Nhập theo <b>token</b> (sẽ nhân 10^{decimals})
+              </label>
+              <button style={{ ...btn, background:"#009688" }} onClick={analyzeBatch}>Phân tích</button>
+              <div style={{ fontSize:12, opacity:.9 }}>
+                {batchRows.length>0 && (
+                  <>
+                    <b>{batchRows.length}</b> dòng | <b>{batchOkCount}</b> OK,{" "}
+                    <b style={{ color: batchHasErrors ? "#f39c12" : "#aaa" }}>
+                      {batchRows.length - batchOkCount}
+                    </b> lỗi | Tổng (raw): <b style={{ color:"#00e0ff" }}>{batchTotal.toString()}</b>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {batchRows.length>0 && (
+              <div style={{ border:"1px solid #333", borderRadius:10, overflow:"hidden" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"60px 1fr 260px 1fr", gap:0, background:"#151515", padding:"8px 10px", fontWeight:600 }}>
+                  <div>#</div><div>Địa chỉ</div><div>Số lượng (raw)</div><div>Trạng thái</div>
+                </div>
+                <div style={{ maxHeight:240, overflow:"auto" }}>
+                  {batchRows.map((r, idx)=>(
+                    <div key={idx} style={{ display:"grid", gridTemplateColumns:"60px 1fr 260px 1fr", gap:0, padding:"6px 10px", borderTop:"1px solid #222", background:r.error ? "#1d1212" : "#121a12" }}>
+                      <div>{r.line}</div>
+                      <div style={{ wordBreak:"break-all" }}>{r.to || <i>(n/a)</i>}</div>
+                      <div>{r.amountRaw.toString()}</div>
+                      <div style={{ color: r.error ? "#e74c3c" : "#2ecc71" }}>
+                        {r.error ? r.error : "OK"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display:"flex", gap:8 }}>
+              <button
+                style={{ ...btn, background:"#2ecc71" }}
+                disabled={batchRows.length===0}
+                onClick={runBatchTransfer}
+              >
+                Gửi tất cả (tuần tự)
+              </button>
+              <button
+                style={{ ...btn, background:"#555" }}
+                onClick={()=>{
+                  setBatchText(""); setBatchRows([]); setBatchTotal(0n);
+                  setBatchOkCount(0); setBatchHasErrors(false);
+                }}
+              >
+                Xoá
+              </button>
             </div>
           </div>
         </Section>
